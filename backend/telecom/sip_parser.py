@@ -5,27 +5,52 @@ from .models import SIPEvent
 
 _STATUS_RE = re.compile(r"\b(SIP/2\.0)\s+(\d{3})\s*(.*)", re.IGNORECASE)
 _METHOD_RE = re.compile(r"^(REGISTER|INVITE|ACK|BYE|CANCEL|OPTIONS|PRACK|UPDATE|SUBSCRIBE|NOTIFY|REFER|INFO|MESSAGE)\b", re.IGNORECASE)
-_CALL_ID_RE = re.compile(r"^Call-ID:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
-_FROM_RE = re.compile(r"^From:.*?(?:sip:)?([^@;>\s]+)", re.IGNORECASE | re.MULTILINE)
-_TO_RE = re.compile(r"^To:.*?(?:sip:)?([^@;>\s]+)", re.IGNORECASE | re.MULTILINE)
+_CALL_ID_RE = re.compile(r"^Call-ID:\s*(.+)$", re.IGNORECASE)
+_FROM_RE = re.compile(r"^From:.*?(?:sip:)?([^@;>\s]+)", re.IGNORECASE)
+_TO_RE = re.compile(r"^To:.*?(?:sip:)?([^@;>\s]+)", re.IGNORECASE)
+_CSEQ_RE = re.compile(r"^CSeq:\s*(\d+)\s+([A-Za-z]+)", re.IGNORECASE)
+
+
+def _header_value(lines: List[str], pattern: re.Pattern) -> str | None:
+    for line in lines:
+        match = pattern.search(line)
+        if match:
+            return match.group(1).strip()
+    return None
 
 
 def parse_sip_log(text: str) -> List[SIPEvent]:
-    """Parse common SIP start-lines from a log into normalized events.
-
-    This is intentionally deterministic; LLMs are not used to interpret protocol fields.
-    """
+    """Parse SIP messages and normalize key correlation headers."""
     events: List[SIPEvent] = []
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    for line in lines:
+    for index, line in enumerate(lines):
         status_match = _STATUS_RE.search(line)
         method_match = _METHOD_RE.search(line)
         if not status_match and not method_match:
             continue
+
         status_code = int(status_match.group(2)) if status_match else None
         reason = status_match.group(3).strip() if status_match else None
         method = method_match.group(1).upper() if method_match else None
-        events.append(SIPEvent(method=method, status_code=status_code, reason=reason, raw=line))
+        context = lines[index:index + 20]
+        call_id = _header_value(context, _CALL_ID_RE)
+        from_user = _header_value(context, _FROM_RE)
+        to_user = _header_value(context, _TO_RE)
+        cseq_match = next((m for line_item in context if (m := _CSEQ_RE.search(line_item))), None)
+
+        events.append(
+            SIPEvent(
+                method=method,
+                status_code=status_code,
+                reason=reason,
+                call_id=call_id,
+                from_user=from_user,
+                to_user=to_user,
+                cseq=int(cseq_match.group(1)) if cseq_match else None,
+                cseq_method=cseq_match.group(2).upper() if cseq_match else None,
+                raw=line,
+            )
+        )
     return events
 
 
