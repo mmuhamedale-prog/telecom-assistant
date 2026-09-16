@@ -12,6 +12,8 @@ class SIPEvent(BaseModel):
     call_id: Optional[str] = None
     from_user: Optional[str] = None
     to_user: Optional[str] = None
+    cseq: Optional[int] = None
+    cseq_method: Optional[str] = None
     raw: str
 
 
